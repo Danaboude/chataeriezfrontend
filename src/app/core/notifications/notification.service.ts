@@ -25,14 +25,24 @@ export class NotificationService {
         return false;
     }
 
-    showNotification(title: string, options?: NotificationOptions): void {
+    async showNotification(title: string, options?: NotificationOptions): Promise<void> {
         if (!this.isBrowser || !('Notification' in window) || Notification.permission !== 'granted') {
             return;
         }
 
-        // Only show if the page is hidden or the user isn't actively interacting
+        // Only show if the page is hidden
         if (document.visibilityState === 'hidden') {
-            new Notification(title, options);
+            // Check for service worker registration (required for many mobile browsers)
+            const registration = await navigator.serviceWorker.getRegistration();
+            if (registration && 'showNotification' in registration) {
+                registration.showNotification(title, {
+                    ...options,
+                    badge: '/favicon.ico', // Small icon for the status bar
+                    icon: '/favicon.ico',  // Main icon for the notification
+                });
+            } else {
+                new Notification(title, options);
+            }
         }
     }
 }
