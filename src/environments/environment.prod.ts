@@ -1,6 +1,6 @@
 export const environment = {
   production: true,
-  backendUrl: 'YOUR_RENDER_BACKEND_URL',
+  backendUrl: 'https://chataeriezbackend.onrender.com',
   mqtt: {
     server: 'ostrich.lmq.cloudamqp.com',
     protocol: 'wss',
