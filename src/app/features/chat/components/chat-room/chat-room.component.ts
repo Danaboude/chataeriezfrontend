@@ -38,6 +38,9 @@ export class ChatRoomComponent implements OnInit, OnDestroy, AfterViewChecked {
   selectedUser: string = this.availableUsers[0];
   errorMessage: string = '';
 
+  unreadCounts: { [topic: string]: number } = {};
+  private globalSubscription!: Subscription;
+
   activeChat: string = 'General';
   chatList: string[] = [];
   showMobileSidebar: boolean = false;
@@ -67,8 +70,29 @@ export class ChatRoomComponent implements OnInit, OnDestroy, AfterViewChecked {
   ngOnInit(): void {
     if (this.mqttService.isConnected) {
       this.showUserSelection = false;
-      this.chatList = ['General', ...this.availableUsers.filter(u => u !== this.username)];
+      this.initChatList();
       this.selectChat('General');
+    }
+  }
+
+  private initChatList() {
+    this.chatList = ['General', ...this.availableUsers.filter(u => u !== this.username)];
+    // Ensure we are subscribed to all topics in our list to receive unread counts
+    this.chatList.forEach(chat => {
+      const topic = this.getTopicForChat(chat);
+      this.mqttService.subscribeToTopic(topic).subscribe();
+    });
+
+    // Start global message listener
+    this.subscribeToGlobalMessages();
+  }
+
+  private getTopicForChat(chat: string): string {
+    if (chat === 'General') {
+      return `chat/group/${this.roomName}`;
+    } else {
+      const participants = [this.username, chat].sort();
+      return `chat/private/${participants.join('-')}`;
     }
   }
 
@@ -87,9 +111,7 @@ export class ChatRoomComponent implements OnInit, OnDestroy, AfterViewChecked {
       this.showUserSelection = false;
       this.notificationService.requestPermission();
 
-      // Build chat list: General + other users
-      this.chatList = ['General', ...this.availableUsers.filter(u => u !== this.username)];
-
+      this.initChatList();
       this.selectChat('General');
     }).catch(err => {
       console.error('Failed to connect:', err);
@@ -102,20 +124,12 @@ export class ChatRoomComponent implements OnInit, OnDestroy, AfterViewChecked {
     this.messages = []; // Clear current view
     this.showMobileSidebar = false; // Close mobile drawer
 
-    if (this.subscription) {
-      this.subscription.unsubscribe();
-    }
+    this.topic = this.getTopicForChat(chat);
 
-    if (chat === 'General') {
-      this.topic = `chat/group/${this.roomName}`;
-    } else {
-      // Private chat topic: Sort names to ensure both parties use same topic
-      const participants = [this.username, chat].sort();
-      this.topic = `chat/private/${participants.join('-')}`;
-    }
+    // Clear unread count for this topic
+    this.unreadCounts[this.topic] = 0;
 
     this.loadMessageHistory();
-    this.subscribeToTopic();
   }
 
   private loadMessageHistory(): void {
@@ -136,8 +150,10 @@ export class ChatRoomComponent implements OnInit, OnDestroy, AfterViewChecked {
     }
   }
 
-  private saveMessageHistory(): void {
-    localStorage.setItem(`chat_history_${this.topic}`, JSON.stringify(this.messages));
+  private saveMessageHistory(topic?: string, messageList?: ChatMessage[]): void {
+    const targetTopic = topic || this.topic;
+    const targetMessages = messageList || this.messages;
+    localStorage.setItem(`chat_history_${targetTopic}`, JSON.stringify(targetMessages));
   }
 
   toggleSidebar() {
@@ -149,55 +165,107 @@ export class ChatRoomComponent implements OnInit, OnDestroy, AfterViewChecked {
   }
 
   ngOnDestroy(): void {
-    if (this.subscription) {
-      this.subscription.unsubscribe();
+    if (this.globalSubscription) {
+      this.globalSubscription.unsubscribe();
     }
     this.stopTimer();
   }
 
-  private subscribeToTopic(): void {
-    if (!this.topic) return;
+  private subscribeToGlobalMessages(): void {
+    if (this.globalSubscription) this.globalSubscription.unsubscribe();
 
-    this.subscription = this.mqttService.messages$.subscribe(
+    this.globalSubscription = this.mqttService.messages$.subscribe(
       ({ topic, message }: { topic: string, message: string }) => {
-        if (topic === this.topic) {
-          try {
-            const parsedMessage: ChatMessage = JSON.parse(message);
+        try {
+          const parsedMessage: ChatMessage = JSON.parse(message);
 
-            if (parsedMessage.type === 'delete') {
-              this.messages = this.messages.filter(m => m.id !== parsedMessage.id);
-              this.saveMessageHistory();
-              return;
-            }
+          // Prepare message
+          parsedMessage.isMe = parsedMessage.sender === this.username;
+          parsedMessage.timestamp = new Date(parsedMessage.timestamp);
 
-            parsedMessage.isMe = parsedMessage.sender === this.username;
-            parsedMessage.timestamp = new Date(parsedMessage.timestamp);
+          if (parsedMessage.type === 'delete') {
+            this.handleDeleteMessage(topic, parsedMessage.id);
+            return;
+          }
 
+          // Case 1: Message is for the ACTIVE chat
+          if (topic === this.topic) {
             const exists = this.messages.some(m => m.id === parsedMessage.id);
-
             if (!exists) {
               this.messages.push(parsedMessage);
               this.saveMessageHistory();
               setTimeout(() => this.scrollToBottom(), 50);
-
-              // Show notification if sender is not current user AND window is hidden
-              if (!parsedMessage.isMe) {
-                this.notificationService.showNotification(`New message from ${parsedMessage.sender}`, {
-                  body: parsedMessage.content.startsWith('[IMAGE]') ? 'Sent an image' :
-                    parsedMessage.content.startsWith('[AUDIO]') ? 'Sent an audio message' :
-                      parsedMessage.content,
-                  icon: '/favicon.ico'
-                });
-              }
             }
-          } catch (e) {
-            console.error('Could not parse incoming message:', message, e);
           }
+          // Case 2: Message is for another chat (Background)
+          else {
+            this.handleBackgroundMessage(topic, parsedMessage);
+          }
+
+        } catch (e) {
+          console.error('Could not parse incoming message:', message, e);
         }
       }
     );
+  }
 
-    this.mqttService.subscribeToTopic(this.topic).subscribe();
+  private handleBackgroundMessage(topic: string, message: ChatMessage) {
+    // 1. Get history for that topic
+    const historyStr = localStorage.getItem(`chat_history_${topic}`);
+    let history: ChatMessage[] = [];
+    if (historyStr) {
+      try {
+        history = JSON.parse(historyStr);
+      } catch (e) { }
+    }
+
+    // 2. Check for duplicate
+    const exists = history.some(m => m.id === message.id);
+    if (!exists) {
+      // 3. Add to history and save
+      history.push(message);
+      this.saveMessageHistory(topic, history);
+
+      // 4. Increment unread count
+      this.unreadCounts[topic] = (this.unreadCounts[topic] || 0) + 1;
+
+      // 5. Show notification (Smart: always show if in different room, or if hidden)
+      if (!message.isMe) {
+        const senderChatName = this.getChatNameFromTopic(topic);
+        this.notificationService.showNotification(`New message from ${message.sender}`, {
+          body: message.content.startsWith('[IMAGE]') ? 'Sent an image' :
+            message.content.startsWith('[AUDIO]') ? 'Sent an audio message' :
+              message.content,
+          icon: '/favicon.ico',
+          forceShow: true // Show even if tab is visible because we are in a different room
+        });
+      }
+    }
+  }
+
+  private handleDeleteMessage(topic: string, messageId: string) {
+    if (topic === this.topic) {
+      this.messages = this.messages.filter(m => m.id !== messageId);
+      this.saveMessageHistory();
+    } else {
+      const historyStr = localStorage.getItem(`chat_history_${topic}`);
+      if (historyStr) {
+        let history = JSON.parse(historyStr);
+        history = history.filter((m: any) => m.id !== messageId);
+        this.saveMessageHistory(topic, history);
+      }
+    }
+  }
+
+  private getChatNameFromTopic(topic: string): string {
+    if (topic.includes('group')) return 'General';
+    // Private chat: extract the other person's name
+    const parts = topic.split('/').pop()?.split('-') || [];
+    return parts.find(p => p !== this.username) || 'Unknown';
+  }
+
+  private subscribeToTopic(): void {
+    // Legacy method - now handled by initChatList and subscribeToGlobalMessages
   }
 
   sendMessage(): void {

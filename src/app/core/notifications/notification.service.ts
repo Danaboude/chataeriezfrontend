@@ -25,13 +25,15 @@ export class NotificationService {
         return false;
     }
 
-    async showNotification(title: string, options?: NotificationOptions): Promise<void> {
+    async showNotification(title: string, options?: NotificationOptions & { forceShow?: boolean }): Promise<void> {
         if (!this.isBrowser || !('Notification' in window) || Notification.permission !== 'granted') {
             return;
         }
 
-        // Only show if the page is hidden
-        if (document.visibilityState === 'hidden') {
+        const forceShow = options?.forceShow ?? false;
+
+        // Show if page is hidden OR if forceShow is true
+        if (document.visibilityState === 'hidden' || forceShow) {
             // Check for service worker registration (required for many mobile browsers)
             const registration = await navigator.serviceWorker.getRegistration();
             if (registration && 'showNotification' in registration) {
