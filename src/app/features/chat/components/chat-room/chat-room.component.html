@@ -132,9 +132,10 @@
   </div>
 
   <!-- Main Chat Window -->
-  <main class="flex-1 flex flex-col bg-white relative">
+  <main class="flex-1 flex flex-col bg-white relative h-full overflow-hidden">
     <!-- Chat Header -->
-    <header class="bg-[#1e45F3] text-white px-4 py-3 flex items-center justify-between shadow-sm z-10 h-[72px]">
+    <header
+      class="bg-[#1e45F3] text-white px-4 py-3 flex items-center justify-between shadow-sm z-30 h-[72px] flex-shrink-0">
       <div class="flex items-center space-x-4">
         <!-- Sidebar Toggle (Mobile only) -->
         <button (click)="toggleSidebar()" class="p-2 -ml-2 hover:bg-white/10 rounded-full transition-colors sm:hidden">

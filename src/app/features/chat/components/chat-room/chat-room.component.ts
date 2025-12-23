@@ -68,19 +68,31 @@ export class ChatRoomComponent implements OnInit, OnDestroy, AfterViewChecked {
   }
 
   ngOnInit(): void {
-    if (this.mqttService.isConnected) {
-      this.showUserSelection = false;
-      this.initChatList();
-      this.selectChat('General');
+    const storedUser = sessionStorage.getItem('username');
+    if (storedUser) {
+      this.username = storedUser;
+      this.selectedUser = storedUser;
+
+      // Auto-reconnect if we have a username
+      this.mqttService.connect(this.username).then(() => {
+        this.showUserSelection = false;
+        this.initChatList();
+        this.selectChat('General');
+      });
     }
   }
 
   private initChatList() {
     this.chatList = ['General', ...this.availableUsers.filter(u => u !== this.username)];
-    // Ensure we are subscribed to all topics in our list to receive unread counts
+
+    // Ensure we are subscribed to all topics in our list
+    // This allows us to receive notifications and unread counts for all rooms
     this.chatList.forEach(chat => {
       const topic = this.getTopicForChat(chat);
-      this.mqttService.subscribeToTopic(topic).subscribe();
+      this.mqttService.subscribeToTopic(topic).subscribe({
+        next: () => console.log(`Subscribed to ${topic}`),
+        error: (err) => console.error(`Failed to subscribe to ${topic}`, err)
+      });
     });
 
     // Start global message listener
