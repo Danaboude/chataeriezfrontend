@@ -99,7 +99,7 @@ export class ChatRoomComponent implements OnInit, OnDestroy, AfterViewChecked {
     this.subscribeToGlobalMessages();
   }
 
-  private getTopicForChat(chat: string): string {
+  public getTopicForChat(chat: string): string {
     if (chat === 'General') {
       return `chat/group/${this.roomName}`;
     } else {
