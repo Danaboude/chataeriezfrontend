@@ -1,4 +1,4 @@
-import { Component, OnDestroy, OnInit, ViewChild, ElementRef, AfterViewChecked } from '@angular/core';
+import { Component, OnDestroy, OnInit, ViewChild, ElementRef, AfterViewChecked, HostListener } from '@angular/core';
 import { trigger, style, animate, transition } from '@angular/animations';
 import { ActivatedRoute, Router } from '@angular/router';
 import { CommonModule } from '@angular/common';
@@ -44,6 +44,14 @@ export class ChatRoomComponent implements OnInit, OnDestroy, AfterViewChecked {
   activeChat: string = 'General';
   chatList: string[] = [];
   showMobileSidebar: boolean = false;
+
+  private currentNotificationAudio: HTMLAudioElement | null = null;
+  @HostListener('window:focus')
+  @HostListener('document:click')
+  @HostListener('document:keydown')
+  onUserInteraction() {
+    this.stopNotificationSound();
+  }
 
   // Audio Recording properties
   isRecording = false;
@@ -227,7 +235,9 @@ export class ChatRoomComponent implements OnInit, OnDestroy, AfterViewChecked {
 
   private playNotificationSound() {
     try {
+      this.stopNotificationSound(); // Stop any existing sound
       const audio = new Audio('/phone-ringtone.mp3');
+      this.currentNotificationAudio = audio;
       audio.play().catch(err => console.error('Error playing sound:', err));
 
       if ('vibrate' in navigator) {
@@ -235,6 +245,14 @@ export class ChatRoomComponent implements OnInit, OnDestroy, AfterViewChecked {
       }
     } catch (e) {
       console.error('Error in notification sound:', e);
+    }
+  }
+
+  private stopNotificationSound() {
+    if (this.currentNotificationAudio) {
+      this.currentNotificationAudio.pause();
+      this.currentNotificationAudio.currentTime = 0;
+      this.currentNotificationAudio = null;
     }
   }
 
