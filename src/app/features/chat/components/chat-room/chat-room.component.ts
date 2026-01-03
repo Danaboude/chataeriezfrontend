@@ -207,6 +207,10 @@ export class ChatRoomComponent implements OnInit, OnDestroy, AfterViewChecked {
               this.messages.push(parsedMessage);
               this.saveMessageHistory();
               setTimeout(() => this.scrollToBottom(), 50);
+
+              if (!parsedMessage.isMe) {
+                this.playNotificationSound();
+              }
             }
           }
           // Case 2: Message is for another chat (Background)
@@ -219,6 +223,19 @@ export class ChatRoomComponent implements OnInit, OnDestroy, AfterViewChecked {
         }
       }
     );
+  }
+
+  private playNotificationSound() {
+    try {
+      const audio = new Audio('/phone-ringtone.mp3');
+      audio.play().catch(err => console.error('Error playing sound:', err));
+
+      if ('vibrate' in navigator) {
+        navigator.vibrate([200, 100, 200]);
+      }
+    } catch (e) {
+      console.error('Error in notification sound:', e);
+    }
   }
 
   private handleBackgroundMessage(topic: string, message: ChatMessage) {
@@ -243,6 +260,8 @@ export class ChatRoomComponent implements OnInit, OnDestroy, AfterViewChecked {
 
       // 5. Show notification (Smart: always show if in different room, or if hidden)
       if (!message.isMe) {
+        this.playNotificationSound(); // Play sound and vibrate
+
         const senderChatName = this.getChatNameFromTopic(topic);
         this.notificationService.showNotification(`New message from ${message.sender}`, {
           body: message.content.startsWith('[IMAGE]') ? 'Sent an image' :
